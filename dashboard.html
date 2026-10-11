@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ZeRO Distributed Training · Interactive Simulation Report</title>
+<meta name="description" content="Interactive report for Session 12: Data Parallel and ZeRO stages 1-3 on a 30B model. Memory math, stage explorer, scaling, communication, step traces and precision." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0b0f19; --bg-2:#0e1424; --panel:rgba(255,255,255,.03); --panel-solid:#121a2e;
+  --border:rgba(255,255,255,.09); --text:#e7ecf5; --muted:#96a0b5; --faint:#5f6a80;
+  --accent:#7c9cff; --accent-2:#57e3c4; --accent-3:#ff9f6b; --warn:#ffcb6b; --danger:#ff6b8b;
+  --grid:rgba(255,255,255,.07); --shadow:0 18px 50px rgba(0,0,0,.45);
+  --glow:0 0 0 1px rgba(124,156,255,.25), 0 10px 40px rgba(124,156,255,.18);
+}
+[data-theme="light"]{
+  --bg:#f4f6fb; --bg-2:#eef1f8; --panel:rgba(10,20,50,.03); --panel-solid:#ffffff;
+  --border:rgba(15,30,70,.12); --text:#141a2b; --muted:#4a5568; --faint:#7a8398;
+  --accent:#4361ee; --accent-2:#0aa88a; --accent-3:#e8712c; --warn:#c98a00; --danger:#e23a63;
+  --grid:rgba(10,20,50,.08); --shadow:0 18px 50px rgba(30,50,120,.14);
+  --glow:0 0 0 1px rgba(67,97,238,.2), 0 10px 40px rgba(67,97,238,.14);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;overflow-x:hidden;max-width:100%}
+body{margin:0;font-family:'Inter',system-ui,sans-serif;color:var(--text);line-height:1.6;overflow-x:hidden;width:100%;
+  background:radial-gradient(1100px 650px at 85% -8%,rgba(124,156,255,.15),transparent 60%),radial-gradient(900px 500px at 0% 12%,rgba(255,159,107,.08),transparent 55%),var(--bg)}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.wrap{max-width:min(1100px,100%);margin:0 auto;padding:0 22px;width:100%}
+a{color:var(--accent);text-decoration:none}
+header.nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:linear-gradient(var(--bg-2),transparent);border-bottom:1px solid var(--border)}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;height:58px;gap:12px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;white-space:nowrap}
+.brand .dot{width:24px;height:24px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-3));box-shadow:var(--glow)}
+.nav-links{display:flex;gap:12px;align-items:center;min-width:0;flex:1;justify-content:flex-end;overflow-x:auto;scrollbar-width:none}
+.nav-links::-webkit-scrollbar{display:none}
+.nav-links a{color:var(--muted);font-weight:500;font-size:13px;white-space:nowrap}
+.nav-links a:hover{color:var(--text)}
+.theme-btn{cursor:pointer;border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:999px;padding:7px 12px;font-size:12.5px;font-weight:600;display:flex;gap:7px;align-items:center;flex-shrink:0}
+.theme-btn:hover{border-color:var(--accent)}
+.theme-btn svg{display:block}
+@media(max-width:900px){.nav-links a{display:none}}
+.hero{padding:48px 0 16px;text-align:center}
+.badge{display:inline-block;font-size:12px;font-weight:600;color:var(--accent-3);border:1px solid var(--border);background:var(--panel);padding:5px 12px;border-radius:999px;margin-bottom:14px}
+.hero h1{font-size:clamp(28px,5vw,46px);line-height:1.08;margin:0 0 12px;font-weight:800;letter-spacing:-1.2px}
+.hero h1 .grad{background:linear-gradient(120deg,var(--accent),var(--accent-3) 60%,var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{max-width:660px;margin:0 auto;color:var(--muted);font-size:16px}
+.chips{margin:18px auto 0;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.chip{font-size:12.5px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:7px 11px}
+.chip b{color:var(--accent)}
+.section{padding:34px 0;scroll-margin-top:68px}
+.sec-tag{font-size:11.5px;font-weight:700;color:var(--accent-3);letter-spacing:.55px;text-transform:uppercase;margin-bottom:6px;display:block}
+.section h2{font-size:23px;margin:0 0 8px;letter-spacing:-.35px}
+.section .sub{color:var(--muted);margin:0 0 18px;font-size:15px;max-width:780px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);max-width:100%;min-width:0}
+.panel{padding:18px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.grid2>*{min-width:0}
+@media(max-width:880px){.grid2{grid-template-columns:1fr}}
+.label{font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.note{font-size:12.5px;color:var(--faint);margin-top:10px;line-height:1.55}
+.callout{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 12px 12px 0;padding:11px 14px;margin-top:12px;font-size:13.5px;color:var(--muted)}
+.callout b{color:var(--text)}
+.pills{display:flex;flex-wrap:wrap;gap:7px}
+.pillbtn{cursor:pointer;font-size:12.5px;font-weight:600;padding:7px 11px;border-radius:10px;border:1px solid var(--border);background:var(--panel-solid);color:var(--muted)}
+.pillbtn:hover,.pillbtn.active{border-color:var(--accent);color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent-3))}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.stat{background:var(--panel-solid);border:1px solid var(--border);border-radius:12px;padding:11px 12px}
+.stat .k{font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase}
+.stat .v{font-size:15px;font-weight:800;margin-top:4px;font-family:'JetBrains Mono',monospace}
+.stat .s{font-size:11px;color:var(--faint);margin-top:2px}
+.stat.hl{background:linear-gradient(135deg,rgba(124,156,255,.14),rgba(255,159,107,.12));border-color:rgba(124,156,255,.35)}
+.stat.hl .v{color:var(--accent)}
+.chart-card{padding:20px}
+.chart-card h3{margin:0 0 4px;font-size:17px}
+.chart-card p{margin:0 0 14px;color:var(--muted);font-size:13px}
+.chart-box{position:relative;height:300px;width:100%;max-width:100%;overflow:hidden}
+.steps{display:flex;flex-direction:column;gap:10px}
+.step{display:grid;grid-template-columns:36px 1fr;gap:12px}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--panel-solid);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent);font-size:13px}
+.step h4{margin:0 0 3px;font-size:14.5px}
+.step p{margin:0;font-size:13.5px;color:var(--muted)}
+.tax{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+.tax .card{padding:14px}
+.tax h4{margin:0 0 5px;font-size:13.5px;color:var(--accent)}
+.tax p{margin:0;font-size:12.5px;color:var(--muted)}
+.good{color:var(--accent-2)!important}.bad{color:var(--danger)!important}
+ul.tight{margin:6px 0 0;padding-left:17px}
+ul.tight li{margin:5px 0;font-size:13.5px;color:var(--muted)}
+ul.tight li b{color:var(--text)}
+.faq details{background:var(--panel);border:1px solid var(--border);border-radius:12px;margin-bottom:8px}
+.faq summary{cursor:pointer;padding:12px 14px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:10px;font-size:14px}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";color:var(--accent);font-family:'JetBrains Mono',monospace}
+.faq details[open] summary::after{content:"-"}
+.faq .body{padding:0 14px 14px;color:var(--muted);font-size:13.5px;border-top:1px solid var(--border)}
+.faq .body p{margin:10px 0 0}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:680px}
+th,td{text-align:left;padding:10px 11px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;background:var(--panel-solid)}
+td.mono{font-family:'JetBrains Mono',monospace;font-size:12px}
+.tag{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap;display:inline-block}
+.t-good{color:var(--accent-2);background:rgba(87,227,196,.12)}
+.t-bad{color:var(--danger);background:rgba(255,107,139,.12)}
+.t-warn{color:var(--warn);background:rgba(255,203,107,.13)}
+.t-info{color:var(--accent);background:rgba(124,156,255,.14)}
+.slider-row{display:flex;justify-content:space-between;font-size:12.5px}
+.slider-row b{font-family:'JetBrains Mono',monospace;color:var(--accent)}
+.field label{font-size:11.5px;color:var(--muted);font-weight:600;display:block;margin-bottom:5px}
+.field input,.field select{width:100%;background:var(--panel-solid);border:1px solid var(--border);color:var(--text);border-radius:9px;padding:8px 9px;font-size:13px;font-family:'JetBrains Mono',monospace}
+.ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+input[type=range]{-webkit-appearance:none;width:100%;height:6px;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent-3));margin:8px 0}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid var(--accent);cursor:pointer}
+.bar{position:relative;height:44px;border-radius:10px;overflow:hidden;background:var(--panel-solid);border:1px solid var(--border)}
+.bar .fill{position:absolute;top:0;bottom:0;left:0;background:linear-gradient(90deg,var(--accent),var(--accent-3));opacity:.75;transition:width .3s}
+.bar .limit{position:absolute;top:0;bottom:0;width:2px;background:var(--danger)}
+.bar .lab{position:absolute;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;white-space:nowrap;font-family:'JetBrains Mono',monospace}
+footer{padding:32px 0 48px;color:var(--faint);font-size:12.5px;text-align:center;border-top:1px solid var(--border);margin-top:20px}
+</style>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <div class="brand"><span class="dot"></span> ZeRO<span style="color:var(--muted);font-weight:600">.sim</span></div>
+    <nav class="nav-links">
+      <a href="#system">Visualizer</a>
+      <a href="#memory">Memory</a>
+      <a href="#explore">Stages</a>
+      <a href="#scaling">Scaling</a>
+      <a href="#comm">Comms</a>
+      <a href="#trace">Trace</a>
+      <a href="#precision">Precision</a>
+      <button class="theme-btn" id="themeBtn"><span id="themeIcon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span> <span id="themeTxt">Dark</span></button>
+    </nav>
+  </div>
+</header>
+
+<section class="hero wrap">
+  <span class="badge">Session 12 · Data Parallel &amp; ZeRO · 30B model run report</span>
+  <h1>When the model is <span class="grad">bigger than the machine</span></h1>
+  <p>A 30B model needs <b>480 GB</b> of training state. One H100 holds <b>74.5 GB</b>. This page replays the simulation — bytes per parameter, ZeRO stages 1–3, scaling, communication and precision — with live widgets.</p>
+  <div class="chips">
+    <span class="chip mono"><b>30B</b> params · 48 layers · 7168 hidden</span>
+    <span class="chip mono"><b>16 B</b>/param · P = <b>60 GB</b></span>
+    <span class="chip mono">GPU limit <b>74.5 GB</b></span>
+    <span class="chip mono">winner <b>ZeRO-3</b> @ 26.3 GB</span>
+  </div>
+</section>
+
+<!-- ============ 00 · SYSTEM VISUALIZER ============ -->
+<section class="section wrap" id="system">
+  <span class="sec-tag">00 · System visualizer — build your run</span>
+  <h2>From a 30B blob to a rack of shards</h2>
+  <p class="sub">Four knobs, one diagram. Drag the model, pick an optimizer, choose hardware, select a sharding strategy — the rack updates live with what lives where, what moves, and why.</p>
+
+  <!-- technique row -->
+  <div class="card panel" style="margin-bottom:14px">
+    <div class="label">Technique · what gets sharded? (exactly §6 of the PDF)</div>
+    <div class="pills" id="sysTechPills"></div>
+    <div class="pills" id="sysExtraPills" style="margin-top:8px"></div>
+    <div class="note" id="sysTechHint" style="margin-top:10px;color:var(--muted)"></div>
+  </div>
+
+  <!-- MODEL — full-width -->
+  <div class="card panel" style="margin-bottom:14px">
+    <div class="label">Model</div>
+    <div id="sysModelBar" style="display:flex;height:40px;border-radius:10px;overflow:hidden;border:1px solid var(--border);margin:10px 0"></div>
+    <div id="sysModelLegend" style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-bottom:12px"></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px">
+      <div>
+        <div class="slider-row"><span>Parameters</span><b id="sysModelVal">30B</b></div>
+        <input type="range" id="sysModelRange" min="7" max="70" step="1" value="30" />
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>7B</span><span>30B</span><span>70B</span></div>
+        <div class="note" style="margin-top:6px">Training state = parameters × 16 B.</div>
+      </div>
+      <div>
+        <div class="slider-row"><span>Precision</span><b id="sysPrecVal">fp16</b></div>
+        <input type="range" id="sysPrecRange" min="0" max="1" step="1" value="0" />
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>fp16</span><span>fp8</span></div>
+        <div class="note" style="margin-top:6px">FP8 halves weight and gradient memory.</div>
+      </div>
+      <div>
+        <div class="label" style="margin-bottom:6px">Optimizer</div>
+        <div class="pills" id="sysOptPills" style="margin-bottom:8px"></div>
+        <button class="pillbtn" id="sysOptToggle" type="button" style="font-size:11.5px;padding:5px 10px">▸ Show internals (m, v, fp32 master)</button>
+        <div class="note" id="sysOptHint" style="margin-top:8px"></div>
+      </div>
+      <div>
+        <div class="stats">
+          <div class="stat"><div class="k">Full state</div><div class="v" id="sysFullV">480 GB</div><div class="s" id="sysFullS">16 B × 30B</div></div>
+          <div class="stat"><div class="k">P (weights)</div><div class="v" id="sysPV">60 GB</div><div class="s">per GPU if replicated</div></div>
+        </div>
+        <div id="sysOptInternals" style="display:none;margin-top:10px;background:var(--panel-solid);border:1px solid var(--border);border-radius:10px;padding:10px">
+          <div class="mono" style="font-size:11.5px;line-height:1.7;color:var(--muted)">
+            <div><b style="color:var(--accent)">m</b> — 1st moment · 4 B/param · <span id="sysMVal">120 GB</span></div>
+            <div><b style="color:var(--accent-2)">v</b> — 2nd moment · 4 B/param · <span id="sysVVal">120 GB</span></div>
+            <div><b style="color:var(--warn)">W₃₂</b> — fp32 master · 4 B/param · <span id="sysW32Val">120 GB</span></div>
+            <div style="margin-top:6px;color:var(--faint)">Total optimizer = 12 B/param = <span id="sysOptTot">360 GB</span> — what ZeRO-1 shards first.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HARDWARE — full-width -->
+  <div class="card panel" style="margin-bottom:14px">
+    <div class="label">Hardware</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:0">
+        <div style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">GPUs (world size)</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:var(--accent);margin:3px 0 2px;min-height:18px" id="sysGpuVal">32</div>
+        <input type="range" id="sysGpuRange" min="1" max="64" step="1" value="32" />
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>1</span><span>8 (1 node)</span><span>32</span><span>64</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0">
+        <div style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">GPU type (memory)</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:var(--accent);margin:3px 0 2px;min-height:18px" id="sysGpuTypeVal">H100 80GB (74.5)</div>
+        <input type="range" id="sysGpuTypeRange" min="0" max="3" step="1" value="2" />
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>T4 16</span><span>A100 40</span><span>H100 74.5</span><span>B200 192</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0">
+        <div style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Micro-batch / GPU</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:var(--accent);margin:3px 0 2px;min-height:18px" id="sysBatchVal">2</div>
+        <input type="range" id="sysBatchRange" min="1" max="8" step="1" value="2" />
+        <div style="height:14px"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0">
+        <div style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Sequence length</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:var(--accent);margin:3px 0 2px;min-height:18px" id="sysSeqVal">4096</div>
+        <input type="range" id="sysSeqRange" min="0" max="5" step="1" value="2" />
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>1k</span><span>32k</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0">
+        <div style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Interconnect mix</div>
+        <div class="mono" style="font-size:13px;font-weight:700;color:var(--accent);margin:3px 0 2px;min-height:18px" id="sysInterVal">Mixed (4 nodes)</div>
+        <input type="range" id="sysInterRange" min="0" max="2" step="1" value="1" />
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>1 node</span><span>Mixed</span><span>Many (IB)</span></div>
+      </div>
+    </div>
+    <div class="note" id="sysHwHint" style="margin-top:8px"></div>
+    <div class="stats" style="margin-top:12px">
+      <div class="stat"><div class="k">Mem / GPU</div><div class="v" id="sysMemV">—</div><div class="s" id="sysMemS">state + act</div></div>
+      <div class="stat"><div class="k">Fits?</div><div class="v" id="sysFitsV">—</div><div class="s" id="sysFitsS">vs limit</div></div>
+      <div class="stat"><div class="k">Comm / step</div><div class="v" id="sysCommV">—</div><div class="s" id="sysCommS">per GPU</div></div>
+      <div class="stat"><div class="k">Time (est.)</div><div class="v" id="sysTimeV">—</div><div class="s" id="sysTimeS">NVLink / IB</div></div>
+    </div>
+  </div>
+
+  <!-- GPUS — full-width rack -->
+  <div class="card panel">
+    <div class="label">GPU</div>
+    <div id="rackFlow" class="mono" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-bottom:10px"></div>
+    <div id="rack" style="display:block"></div>
+    <div id="rackLegend" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;font-size:11px;color:var(--muted)"></div>
+    <div class="callout" id="rackHint" style="margin-top:12px"></div>
+    <div class="note" id="rackStats" style="margin-top:10px"></div>
+  </div>
+</section>
+
+<section class="section wrap" id="memory">
+  <span class="sec-tag">01 · Memory math (per parameter)</span>
+  <h2>16 bytes per weight, 480 GB per GPU</h2>
+  <p class="sub">Every weight carries itself, its gradient, an fp32 master copy and two optimizer averages. Notebook §1: weights 60 GB · grads 60 GB · fp32 120 GB · optimizer 240 GB.</p>
+  <div class="stats" style="margin-bottom:12px">
+    <div class="stat"><div class="k">Parameters</div><div class="v">30.0B</div><div class="s">fp16 · 48 layers</div></div>
+    <div class="stat"><div class="k">Bytes / param</div><div class="v">16 B</div><div class="s">2 + 2 + 4 + 8</div></div>
+    <div class="stat hl"><div class="k">Full replica</div><div class="v">480 GB</div><div class="s">447 GiB · 6.4x GPU</div></div>
+    <div class="stat"><div class="k">GPU usable</div><div class="v">74.5 GB</div><div class="s">H100 80 GB</div></div>
+    <div class="stat"><div class="k">Full model fits?</div><div class="v bad">NO</div><div class="s">needs sharding</div></div>
+  </div>
+  <div class="grid2">
+    <div class="card panel chart-card">
+      <h3>Bytes per parameter</h3>
+      <p>Where the 16 bytes go.</p>
+      <div class="chart-box"><canvas id="bytesChart"></canvas></div>
+    </div>
+    <div class="card panel chart-card">
+      <h3>Memory composition (GB)</h3>
+      <p>Full-model replica, 30B params.</p>
+      <div class="chart-box"><canvas id="compChart"></canvas></div>
+    </div>
+  </div>
+  <div class="callout"><b>Carry-forward:</b> training one weight costs <b>16 bytes</b> — 30B weights cost <b>480 GB (447 GiB)</b> before a single calculation. Six 80 GB cards just to hold the state.</div>
+</section>
+
+<section class="section wrap" id="explore">
+  <span class="sec-tag">02 · Interactive stage explorer</span>
+  <h2>Pick a stage — drag the GPU count</h2>
+  <p class="sub">Theoretical memory from the Session-12 formulas. DP holds 16 B/param · ZeRO-1 shards 12/16 · ZeRO-2 shards 14/16 · ZeRO-3 shards 16/16. Everything updates live.</p>
+  <div class="pills" id="stagePills" style="margin-bottom:14px"></div>
+  <div class="grid2">
+    <div class="card panel">
+      <div class="label">Cluster size</div>
+      <div class="slider-row"><span>GPUs (world size)</span><b id="wsVal">32</b></div>
+      <input type="range" id="wsRange" min="8" max="256" step="8" value="32" />
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>8</span><span>64</span><span>128</span><span>192</span><span>256</span></div>
+      <div class="slider-row" style="margin-top:10px"><span>Micro-batch / GPU</span><b id="batchVal">2</b></div>
+      <input type="range" id="batchRange" min="1" max="8" step="1" value="2" />
+      <div class="slider-row"><span>Sequence length</span><b id="seqVal">4096</b></div>
+      <input type="range" id="seqRange" min="0" max="5" step="1" value="2" />
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>1k</span><span>2k</span><span>4k</span><span>8k</span><span>16k</span><span>32k</span></div>
+      <div class="slider-row" style="margin-top:10px"><span>Precision</span><b id="precVal">fp16</b></div>
+      <input type="range" id="precRange" min="0" max="1" step="1" value="0" />
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>fp16</span><span>fp8</span></div>
+      <div class="slider-row" style="margin-top:10px"><span>GPU memory limit (GB)</span><b id="limVal">74.5</b></div>
+      <input type="range" id="limRange" min="16" max="160" step="0.5" value="74.5" />
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint)"><span>16 (T4)</span><span>40 (A100)</span><span>74.5 (H100)</span><span>160</span></div>
+      <div class="label" style="margin-top:14px">Memory per GPU vs limit</div>
+      <div class="bar"><div class="fill" id="memFill"></div><div class="limit" id="memLimit"></div><div class="lab" id="memLab" style="left:8px"></div></div>
+      <div class="note" id="memNote"></div>
+    </div>
+    <div>
+      <div class="stats" style="margin-bottom:12px">
+        <div class="stat hl"><div class="k">Stage</div><div class="v" id="stName" style="font-size:14px">—</div><div class="s" id="stWhat">—</div></div>
+        <div class="stat"><div class="k">Memory / GPU</div><div class="v" id="stMem">—</div><div class="s" id="stBpp">—</div></div>
+        <div class="stat"><div class="k">Fits?</div><div class="v" id="stFits">—</div><div class="s" id="stHead">GPUs needed</div></div>
+        <div class="stat"><div class="k">Comm / step</div><div class="v" id="stComm">—</div><div class="s" id="stMult">—</div></div>
+      </div>
+      <div class="card panel">
+        <div class="label">What this stage shards</div>
+        <p id="stRule" class="mono" style="margin:0;font-size:12px;color:var(--accent);line-height:1.7"></p>
+        <p id="stWhy" style="margin:10px 0 0;color:var(--muted);font-size:13.5px"></p>
+        <p id="stVerdict" style="margin:8px 0 0;font-size:13px"></p>
+      </div>
+    </div>
+  </div>
+  <div class="card panel tablewrap" style="margin-top:14px">
+    <table>
+      <thead><tr><th>Stage</th><th>Memory/GPU (32 GPUs)</th><th>Peak/GPU</th><th>Fits?</th><th>Comm/step</th><th>Comm time</th><th>Step time</th><th>Reduction</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">DP</td><td class="mono">491.3 GB</td><td class="mono">491.3 GB</td><td><span class="tag t-bad">No</span></td><td class="mono">1920.0 GB</td><td class="mono">0.21 ms</td><td class="mono">300.21 ms</td><td class="mono">—</td></tr>
+        <tr><td class="mono">ZeRO-1</td><td class="mono">142.5 GB</td><td class="mono">142.5 GB</td><td><span class="tag t-bad">No</span></td><td class="mono">180.0 GB</td><td class="mono">0.50 ms</td><td class="mono">300.50 ms</td><td class="mono">-70.4%</td></tr>
+        <tr><td class="mono">ZeRO-2</td><td class="mono">84.4 GB</td><td class="mono">84.4 GB</td><td><span class="tag t-bad">No</span></td><td class="mono">180.0 GB</td><td class="mono">0.29 ms</td><td class="mono">300.29 ms</td><td class="mono">-82.4%</td></tr>
+        <tr><td class="mono">ZeRO-3</td><td class="mono">26.3 GB</td><td class="mono">26.3 GB</td><td><span class="tag t-good">Yes</span></td><td class="mono">180.0 GB</td><td class="mono">0.36 ms</td><td class="mono">300.36 ms</td><td class="mono">-94.5%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">Simulated 32-GPU run (§2/§9, batch 2 x seq 4096, +activations). Theoretical scaling (§3): ZeRO-2 crosses the limit at 32 GPUs (73.1 GB), ZeRO-3 fits from 8 (60 GB).</div>
+</section>
+
+<section class="section wrap" id="scaling">
+  <span class="sec-tag">03 · Memory scaling</span>
+  <h2>The memory ladder, 8 to 256 GPUs</h2>
+  <p class="sub">Notebook §3–§4. DP never moves. ZeRO-1 asymptotes near 120 GB. ZeRO-2 fits from 32 GPUs. ZeRO-3 halves every doubling.</p>
+  <div class="grid2">
+    <div class="card panel chart-card">
+      <h3>Peak memory per GPU</h3>
+      <p>Theoretical GB/GPU; dashed line = 74.5 GB limit.</p>
+      <div class="chart-box"><canvas id="scaleChart"></canvas></div>
+    </div>
+    <div class="card panel chart-card">
+      <h3>Who fits where?</h3>
+      <p>ZeRO-2 vs ZeRO-3 across world sizes.</p>
+      <div class="chart-box"><canvas id="fitsChart"></canvas></div>
+    </div>
+  </div>
+  <div class="callout"><b>Decision:</b> at 30B params the choice is <b>ZeRO-2 on 32+ GPUs</b> or <b>ZeRO-3 from 8 GPUs</b> — DP and ZeRO-1 never fit at any world size.</div>
+</section>
+
+<section class="section wrap" id="comm">
+  <span class="sec-tag">04 · Communication cost</span>
+  <h2>2P for DP/1/2, 3P for ZeRO-3</h2>
+  <p class="sub">Notebook §5–§6, P = 60 GB. Reduce-scatter + all-gather = all-reduce, so stages 1–2 pay the same 2P as DP. Stage 3 adds weight all-gathers → 3P.</p>
+  <div class="stats" style="margin-bottom:12px">
+    <div class="stat"><div class="k">P (params)</div><div class="v">60 GB</div><div class="s">30B x 2 bytes</div></div>
+    <div class="stat"><div class="k">2P (DP/1/2)</div><div class="v">120 GB</div><div class="s">NVLink 267 ms</div></div>
+    <div class="stat"><div class="k">3P (ZeRO-3)</div><div class="v">180 GB</div><div class="s">NVLink 400 ms</div></div>
+    <div class="stat"><div class="k">NVLink vs IB</div><div class="v">9x</div><div class="s">450 vs 50 GB/s</div></div>
+  </div>
+  <div class="grid2">
+    <div class="card panel chart-card">
+      <h3>Communication volume per step</h3>
+      <p>GB per GPU + multiplier overlay.</p>
+      <div class="chart-box"><canvas id="commVolChart"></canvas></div>
+    </div>
+    <div class="card panel chart-card">
+      <h3>Time by interconnect (log)</h3>
+      <p>NVLink 450 GB/s vs InfiniBand 50 GB/s.</p>
+      <div class="chart-box"><canvas id="commTimeChart"></canvas></div>
+    </div>
+  </div>
+  <div class="callout"><b>Overlap:</b> gradient bucketing streams transfers during the backward pass — communication hidden behind compute costs nothing. Enable from step one; log comm/compute ratio from the start.</div>
+</section>
+
+<section class="section wrap" id="trace">
+  <span class="sec-tag">05 · Step trace (8 GPUs)</span>
+  <h2>One training step, four ways</h2>
+  <p class="sub">Notebook §8 — setup to optimizer on 8 GPUs (batch 2, seq 4096). Only ZeRO-3 ends under the limit.</p>
+  <div class="pills" id="tracePills" style="margin-bottom:14px"></div>
+  <div class="grid2">
+    <div class="card panel">
+      <div class="label" id="traceTitle">Trace</div>
+      <div class="steps" id="traceSteps"></div>
+    </div>
+    <div>
+      <div class="stats" style="margin-bottom:12px">
+        <div class="stat hl"><div class="k">Peak memory</div><div class="v" id="trPeak">—</div><div class="s">per GPU</div></div>
+        <div class="stat"><div class="k">Fits 74.5 GB?</div><div class="v" id="trFits">—</div><div class="s" id="trTensors">tensors</div></div>
+      </div>
+      <div class="callout" id="trNote"></div>
+    </div>
+  </div>
+</section>
+
+<section class="section wrap" id="precision">
+  <span class="sec-tag">06 · Precision (FP16 vs FP8)</span>
+  <h2>MXFP8 saves 12%, the wins are elsewhere</h2>
+  <p class="sub">Notebook §7. Halving weights + grads (60 to 30 GB each) cuts 480 to 420 GB. The fp32 master + optimizer states (360 GB) do not move — real gains are matmul speed, activations and comm volume.</p>
+  <div class="grid2">
+    <div class="card panel chart-card">
+      <h3>Memory by precision</h3>
+      <p>GB per component, FP16 vs FP8.</p>
+      <div class="chart-box"><canvas id="precChart"></canvas></div>
+    </div>
+    <div class="card panel">
+      <div class="label">Precision ledger</div>
+      <div class="stats">
+        <div class="stat"><div class="k">FP16 total</div><div class="v">480 GB</div><div class="s">baseline</div></div>
+        <div class="stat"><div class="k">FP8 total</div><div class="v">420 GB</div><div class="s">-12.5%</div></div>
+        <div class="stat"><div class="k">Weights saved</div><div class="v">30 GB</div><div class="s">60 to 30</div></div>
+        <div class="stat"><div class="k">Grads saved</div><div class="v">30 GB</div><div class="s">60 to 30</div></div>
+        <div class="stat"><div class="k">Optimizer</div><div class="v">360 GB</div><div class="s">unchanged</div></div>
+        <div class="stat"><div class="k">Softmax</div><div class="v">fp32</div><div class="s">kept precise</div></div>
+      </div>
+      <div class="callout"><b>Open question:</b> short bf16 vs MXFP8 runs on the same architecture, comparing loss and step time. Commits us to Blackwell hardware.</div>
+    </div>
+  </div>
+</section>
+
+<section class="section wrap" id="takeaways">
+  <span class="sec-tag">07 · Key takeaways &amp; V5 decisions</span>
+  <h2>What the arithmetic forces</h2>
+  <p class="sub">Seven findings from the notebook + PDF §13.</p>
+  <div class="tax" style="margin-bottom:14px">
+    <div class="card"><h4>DP replicates everything</h4><p>480 GB/GPU forever. Six cards just to hold state, before activations.</p></div>
+    <div class="card"><h4>ZeRO-1/2 still miss</h4><p>142.5 / 84.4 GB at 32 GPUs in-sim. Theory: ZeRO-2 fits only from 32 (73.1 GB).</p></div>
+    <div class="card"><h4>ZeRO-3 wins</h4><p>26.3 GB/GPU simulated at 32; fits from 8 GPUs with room for activations.</p></div>
+    <div class="card"><h4>Comm trade: 2P to 3P</h4><p>Extra forward/backward all-gathers: 120 to 180 GB per GPU per step.</p></div>
+    <div class="card"><h4>Overlap from step one</h4><p>Bucketed reduce-scatter during backward hides the transfer; log the ratio early.</p></div>
+    <div class="card"><h4>FP8 is a speed play</h4><p>-12% state, but the prize is matmul, activations and comm volume.</p></div>
+  </div>
+  <div class="faq">
+    <details open><summary>Starting point: ZeRO-2 on 32 or ZeRO-3 on 8?</summary><div class="body"><p>Needs a measured step time for both on the real architecture, with activation memory included. The 9x NVLink vs InfiniBand gap decides how much traffic must stay inside a node.</p></div></details>
+    <details><summary>8-bit from the start?</summary><div class="body"><p>Short bf16 vs MXFP8 runs on the same architecture, comparing loss and step time. TorchTitan reports up to 41% faster on B200 with matching 1,500-step loss.</p></div></details>
+    <details><summary>Any state to CPU/NVMe?</summary><div class="body"><p>Only if memory-bound after the stage is chosen — offload converts a memory problem into a PCIe-bandwidth problem (~60 GB/s).</p></div></details>
+  </div>
+</section>
+
+<footer>ZeRO distributed-training simulation · Session 12 · data from <span class="mono">notebooks/zero_simulation_demo_executed.ipynb</span> · theme: drops/ ERA V5 system</footer>
+
+<script>
+var root=document.documentElement;
+var ICON_MOON='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+var ICON_SUN='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/></svg>';
+function setTheme(t){
+  root.setAttribute('data-theme',t);
+  try{localStorage.setItem('cl-theme',t);}catch(e){}
+  document.getElementById('themeIcon').innerHTML=t==='dark'?ICON_MOON:ICON_SUN;
+  document.getElementById('themeTxt').textContent=t==='dark'?'Dark':'Light';
+  buildAllCharts();
+}
+document.getElementById('themeBtn').onclick=function(){setTheme(root.getAttribute('data-theme')==='dark'?'light':'dark');};
+function cssVar(n){return getComputedStyle(root).getPropertyValue(n).trim();}
+
+var STAGES={
+  dp:{name:'Data Parallel',what:'full replica',rule:'replicated: W,g,W32,m,v -> all-reduce grads (2P)',
+    why:'Every GPU holds all 16 B/param. 8 GPUs = 8 identical 480 GB copies. Simple, never fits 30B.',
+    verdict:'bad',vtxt:'Never fits: 480 GB/GPU at any world size.'},
+  zero1:{name:'ZeRO-1',what:'shard optimizer',rule:'shard W32,m,v (12/16 B) -> reduce-scatter + all-gather (2P)',
+    why:'Each GPU updates 1/N of optimizer state, then shares weights back. Same 2P as DP.',
+    verdict:'bad',vtxt:'165 GB @8, 131 GB @32. Weights + grads still replicated.'},
+  zero2:{name:'ZeRO-2',what:'+ shard gradients',rule:'shard g + optimizer (14/16 B) -> reduce-scatter grads (2P)',
+    why:'A GPU only needs grads for its own weight slice. Still 2P.',
+    verdict:'warn',vtxt:'Fits from 32 GPUs (73.1 GB theory) - tight.'},
+  zero3:{name:'ZeRO-3',what:'shard everything',rule:'shard W,g,opt (16/16 B) -> fwd/bwd all-gather + reduce-scatter (3P)',
+    why:'Each GPU stores 1/N of everything; gathers layer weights on demand, discards after use.',
+    verdict:'good',vtxt:'Fits from 8 GPUs (60 GB). Winner.'}
+};
+var TRACE={
+  dp:{peak:491.27,tensors:'W, g, W32, opt on every GPU',note:'DP carries the full 480 GB everywhere; activations push it to 491 GB. 6.6x over the limit.',
+    steps:[['Setup','480.0 GB','full replica placed'],['Forward','491.3 GB','+ activations'],['Backward','491.3 GB','grad compute'],['All-reduce','491.3 GB','2P grads averaged'],['Optimizer','491.3 GB','identical update']]},
+  zero1:{peak:176.27,tensors:'W, g + 1/8 optimizer shard',note:'Sharding 12 of 16 bytes cuts ~63%, still 2.4x over. Weights + grads (4 B/param = 120 GB) pin the floor.',
+    steps:[['Setup','165.0 GB','1/8 optimizer shard'],['Forward','176.3 GB','+ activations'],['Backward','176.3 GB','grad compute'],['Reduce-scatter','176.3 GB','grads to owners'],['Optimizer','142.5 GB','sharded update']]},
+  zero2:{peak:123.77,tensors:'W + 1/8 grads + 1/8 optimizer',note:'Sharding 14 of 16 bytes. Only the 2 B/param weights stay replicated (60 GB) plus transient grads.',
+    steps:[['Setup','112.5 GB','1/8 grads + opt'],['Forward','123.8 GB','+ activations'],['Backward','123.8 GB','grad compute'],['Reduce-scatter','123.8 GB','grads to owners'],['Optimizer','84.4 GB','sharded update']]},
+  zero3:{peak:71.27,tensors:'1/8 of W, g, W32, opt',note:'Everything sharded: 60 GB base. Transient all-gathered layer weights + activations = 71.3 GB. Fits.',
+    steps:[['Setup','60.0 GB','all sharded 1/8'],['All-gather','71.3 GB','layer weights in'],['Forward','71.3 GB','+ activations'],['Backward','71.3 GB','gather + compute'],['Reduce-scatter','26.3 GB','grads to owners (3P)']]}
+};
+var SCALE_WS=[8,16,32,64,128,256];
+var GPU_TYPES=[{name:'T4 16GB',gb:16},{name:'A100 40GB',gb:40},{name:'H100 80GB',gb:74.5},{name:'B200 192GB',gb:192}];
+function bppOf(stage,N,prec){
+  var w=(prec==='fp8'?1:2), g=(prec==='fp8'?1:2);
+  if(stage==='dp')return w+g+4+8;
+  if(stage==='zero1')return w+g+(4+8)/N;
+  if(stage==='zero2')return w+(g+4+8)/N;
+  return (w+g+4+8)/N;
+}
+function memGB(stage,N,prec,paramsB){ var P=paramsB!=null?paramsB:30; return bppOf(stage,N,prec)*P; }
+function sysMemComps(stage,N,prec,paramsB){
+  var P=paramsB!=null?paramsB:30;
+  var w=(prec==='fp8'?1:2)*P, g=(prec==='fp8'?1:2)*P, w32=4*P, opt=8*P;
+  if(stage==='dp') return {w:w,g:g,w32:w32,opt:opt,wShard:w,gShard:g,w32Shard:w32,optShard:opt};
+  if(stage==='zero1') return {w:w,g:g,w32:w32/N,opt:opt/N,wShard:w,gShard:g,w32Shard:w32/N,optShard:opt/N};
+  if(stage==='zero2') return {w:w,g:g/N,w32:w32/N,opt:opt/N,wShard:w,gShard:g/N,w32Shard:w32/N,optShard:opt/N};
+  var d=N; return {w:w/d,g:g/d,w32:w32/d,opt:opt/d,wShard:w/d,gShard:g/d,w32Shard:w32/d,optShard:opt/d};
+}
+function commGB(stage){return stage==='zero3'?180:120;}
+function commMult(stage){return stage==='zero3'?3:2;}
+
+var curStage='zero3', curTrace='zero3', charts={};
+function fmt1(x){return (Math.round(x*10)/10).toFixed(1);}
+
+var sp=document.getElementById('stagePills');
+Object.keys(STAGES).forEach(function(k){
+  var b=document.createElement('button');
+  b.className='pillbtn'+(k===curStage?' active':'');
+  b.textContent=STAGES[k].name; b.dataset.k=k;
+  b.onclick=function(){curStage=k;
+    var btns=sp.querySelectorAll('.pillbtn');
+    for(var i=0;i<btns.length;i++)btns[i].classList.toggle('active',btns[i].dataset.k===k);
+    updateExplorer();};
+  sp.appendChild(b);
+});
+var tp=document.getElementById('tracePills');
+Object.keys(STAGES).forEach(function(k){
+  var b=document.createElement('button');
+  b.className='pillbtn'+(k===curTrace?' active':'');
+  b.textContent=STAGES[k].name; b.dataset.k=k;
+  b.onclick=function(){curTrace=k;
+    var btns=tp.querySelectorAll('.pillbtn');
+    for(var i=0;i<btns.length;i++)btns[i].classList.toggle('active',btns[i].dataset.k===k);
+    renderTrace();};
+  tp.appendChild(b);
+});
+
+var wsRange=document.getElementById('wsRange');
+var batchRange=document.getElementById('batchRange'), seqRange=document.getElementById('seqRange');
+var precRange=document.getElementById('precRange'), limRange=document.getElementById('limRange');
+var SEQ_STEPS=[1024,2048,4096,8192,16384,32768];
+function curN(){return parseInt(wsRange.value,10);}
+function curPrec(){return precRange.value==='1'?'fp8':'fp16';}
+function curLim(){return parseFloat(limRange.value);}
+[wsRange,batchRange,seqRange,precRange,limRange].forEach(function(r){r.addEventListener('input',updateExplorer);});
+
+function updateExplorer(){
+  var N=curN(), prec=curPrec(), lim=curLim();
+  var batch=parseInt(batchRange.value,10), seq=SEQ_STEPS[parseInt(seqRange.value,10)];
+  document.getElementById('wsVal').textContent=N;
+  document.getElementById('batchVal').textContent=batch;
+  document.getElementById('seqVal').textContent=seq;
+  document.getElementById('precVal').textContent=prec;
+  document.getElementById('limVal').textContent=lim.toFixed(1);
+  var S=STAGES[curStage];
+  var base=memGB(curStage,N,prec), bpp=bppOf(curStage,N,prec);
+  var act=0.001376*batch*seq;
+  var mem=base+act, fits=mem<=lim;
+  document.getElementById('stName').textContent=S.name;
+  document.getElementById('stWhat').textContent=S.what+' · '+prec+' · b'+batch+' s'+seq;
+  var mEl=document.getElementById('stMem');
+  mEl.textContent=fmt1(mem)+' GB'; mEl.className='v '+(fits?'good':'bad');
+  document.getElementById('stBpp').textContent=fmt1(bpp)+' B/param + '+fmt1(act)+' act';
+  var fEl=document.getElementById('stFits');
+  fEl.textContent=fits?'YES':'NO'; fEl.className='v '+(fits?'good':'bad');
+  document.getElementById('stComm').textContent=commGB(curStage)+' GB';
+  document.getElementById('stMult').textContent=commMult(curStage)+'P per step';
+  document.getElementById('stRule').textContent=S.rule;
+  document.getElementById('stWhy').textContent=S.why;
+  var vd=document.getElementById('stVerdict');
+  vd.textContent=(fits?'+ ':'- ')+S.vtxt; vd.className=fits?'good':'bad';
+  var span=Math.max(mem,lim,base);
+  var pct=Math.max(2,Math.min(100,mem/span*100));
+  document.getElementById('memFill').style.width=pct+'%';
+  document.getElementById('memFill').style.background=fits?'linear-gradient(90deg,var(--accent-2),var(--accent))':'linear-gradient(90deg,var(--accent),var(--accent-3))';
+  document.getElementById('memLimit').style.left=(lim/span*100)+'%';
+  var lab=document.getElementById('memLab');
+  lab.textContent=fmt1(base)+' + '+fmt1(act)+' act = '+fmt1(mem)+' GB';
+  lab.style.color=fits?'var(--accent-2)':'var(--danger)';
+  var over=mem-lim;
+  document.getElementById('memNote').textContent=fits
+    ? 'Headroom: '+fmt1(lim-mem)+' GB left. State '+fmt1(base)+' GB + activations '+fmt1(act)+' GB (b'+batch+' × s'+seq+').'
+    : 'Over by '+fmt1(over)+' GB ('+(mem/lim).toFixed(1)+'x). Slide GPUs up, batch/seq down, or move up a ZeRO stage.';
+}
+
+function renderTrace(){
+  var T=TRACE[curTrace], S=STAGES[curTrace];
+  document.getElementById('traceTitle').textContent=S.name+' — 8 GPUs';
+  var box=document.getElementById('traceSteps'); box.innerHTML='';
+  T.steps.forEach(function(s,i){
+    var d=document.createElement('div'); d.className='step';
+    d.innerHTML='<div class="n">'+(i+1)+'</div><div><h4>'+s[0]+' · <span class="mono">'+s[1]+'</span></h4><p>'+s[2]+'</p></div>';
+    box.appendChild(d);
+  });
+  var fits=T.peak<=74.5;
+  var pEl=document.getElementById('trPeak');
+  pEl.textContent=T.peak.toFixed(2)+' GB'; pEl.className='v '+(fits?'good':'bad');
+  var fEl=document.getElementById('trFits');
+  fEl.textContent=fits?'YES':'NO'; fEl.className='v '+(fits?'good':'bad');
+  document.getElementById('trTensors').textContent=T.tensors;
+  document.getElementById('trNote').innerHTML='<b>Verdict:</b> '+T.note;
+}
+/* ============ 00 · SYSTEM VISUALIZER ============ */
+var sysStage='zero3', sysOpt='adamw', sysOptOpen=false;
+var sysExtras={ckpt:false, offload:false};
+var EXTRA_OPTS=[
+  {k:'ckpt',label:'Activation checkpoint',hint:'Recompute activations on backward. Saves ~60% activation RAM, costs ~30% extra compute. Typical with ZeRO-2/3 on long seq.'},
+  {k:'offload',label:'CPU offload (ZeRO-Offload)',hint:'Keep optimizer state on CPU; update there. Saves GPU RAM, pays PCIe 60 GB/s. Use only when memory-bound.'}
+];
+var OPTS=[
+  {k:'adamw',label:'AdamW',hint:'Default. m + v + fp32 master = 12 B/param. Needs warmup + cosine/WSD.'},
+  {k:'adam',label:'Adam',hint:'Like AdamW but L2 in loss — decay warped by adaptivity. Prefer AdamW.'},
+  {k:'lion',label:'Lion',hint:'Sign-based, lower state (no m/v in fp32). Experimental for memory-lean runs.'}
+];
+function sysParamsB(){return parseInt(document.getElementById('sysModelRange').value,10);}
+function sysPrec(){return document.getElementById('sysPrecRange').value==='1'?'fp8':'fp16';}
+function sysGpuN(){return parseInt(document.getElementById('sysGpuRange').value,10);}
+function sysGpuGB(){return GPU_TYPES[parseInt(document.getElementById('sysGpuTypeRange').value,10)].gb;}
+function sysGpuName(){return GPU_TYPES[parseInt(document.getElementById('sysGpuTypeRange').value,10)].name;}
+function sysSeq(){return SEQ_STEPS[parseInt(document.getElementById('sysSeqRange').value,10)];}
+function sysBatch(){return parseInt(document.getElementById('sysBatchRange').value,10);}
+function sysInterIdx(){return parseInt(document.getElementById('sysInterRange').value,10);}
+
+var sysTechEl=document.getElementById('sysTechPills');
+Object.keys(STAGES).forEach(function(k){
+  var b=document.createElement('button'); b.className='pillbtn'+(k===sysStage?' active':''); b.textContent=STAGES[k].name; b.dataset.k=k;
+  b.onclick=function(){sysStage=k; var bs=sysTechEl.querySelectorAll('.pillbtn'); for(var i=0;i<bs.length;i++)bs[i].classList.toggle('active',bs[i].dataset.k===k); updateSystem();};
+  sysTechEl.appendChild(b);
+});
+var sysExtraEl=document.getElementById('sysExtraPills');
+EXTRA_OPTS.forEach(function(o){
+  var b=document.createElement('button'); b.className='pillbtn'; b.textContent='+ '+o.label; b.dataset.k=o.k;
+  b.onclick=function(){sysExtras[o.k]=!sysExtras[o.k]; b.classList.toggle('active',sysExtras[o.k]); updateSystem();};
+  sysExtraEl.appendChild(b);
+});
+var sysOptEl=document.getElementById('sysOptPills');
+OPTS.forEach(function(o){
+  var b=document.createElement('button'); b.className='pillbtn'+(o.k===sysOpt?' active':''); b.textContent=o.label; b.dataset.k=o.k;
+  b.onclick=function(){sysOpt=o.k; var bs=sysOptEl.querySelectorAll('.pillbtn'); for(var i=0;i<bs.length;i++)bs[i].classList.toggle('active',bs[i].dataset.k===o.k); updateSystem();};
+  sysOptEl.appendChild(b);
+});
+document.getElementById('sysOptToggle').onclick=function(){
+  sysOptOpen=!sysOptOpen;
+  document.getElementById('sysOptInternals').style.display=sysOptOpen?'block':'none';
+  this.textContent=(sysOptOpen?'▾ Hide internals':'▸ Show internals (m, v, fp32 master)');
+  this.classList.toggle('active',sysOptOpen);
+};
+['sysModelRange','sysPrecRange','sysGpuRange','sysGpuTypeRange','sysBatchRange','sysSeqRange','sysInterRange'].forEach(function(id){
+  document.getElementById(id).addEventListener('input',updateSystem);
+});
+
+function updateSystem(){
+  var P=sysParamsB(), prec=sysPrec(), N=sysGpuN(), gpuGB=sysGpuGB(), gpuName=sysGpuName();
+  var batch=sysBatch(), seq=sysSeq(), inter=sysInterIdx();
+  var S=STAGES[sysStage], comps=sysMemComps(sysStage,N,prec,P);
+  var act=0.001376*batch*seq*(prec==='fp8'?0.7:1);
+  if(sysExtras.ckpt) act*=0.35;
+  var state=comps.wShard+comps.gShard+comps.w32Shard+comps.optShard;
+  var offSave=sysExtras.offload? (comps.optShard*0.95) : 0;
+  var total=state+act - offSave*0.0;
+  // we keep offload as a hint, not subtracting fully from GPU count in this demo — visual shows CPU reserve
+  var totalForBar=state+act;
+  var fits=totalForBar<=gpuGB;
+  var Pgb=P*(prec==='fp8'?1:2);
+  var commPerGpu=(sysStage==='zero3'?Pgb*3:Pgb*2);
+  var nodes=Math.ceil(N/8);
+  var nvTime=commPerGpu/450, ibTime=commPerGpu/50;
+  var interLabel=['Single node (NVLink)','Mixed ('+nodes+' nodes)','Many nodes (IB)'][inter];
+  var interTime=inter===0?nvTime: inter===2?ibTime: (nvTime*0.4+ibTime*0.6);
+  // header vals
+  document.getElementById('sysModelVal').textContent=P+'B';
+  document.getElementById('sysPrecVal').textContent=prec;
+  document.getElementById('sysGpuVal').textContent=N+' · '+nodes+' node'+(nodes>1?'s':'');
+  document.getElementById('sysGpuTypeVal').textContent=gpuName+' ('+gpuGB+')';
+  document.getElementById('sysBatchVal').textContent=batch;
+  document.getElementById('sysSeqVal').textContent=seq;
+  document.getElementById('sysInterVal').textContent=interLabel;
+  // optimizer internals
+  document.getElementById('sysMVal').textContent=(4*P).toFixed(1)+' GB';
+  document.getElementById('sysVVal').textContent=(4*P).toFixed(1)+' GB';
+  document.getElementById('sysW32Val').textContent=(4*P).toFixed(1)+' GB';
+  document.getElementById('sysOptTot').textContent=(12*P).toFixed(1)+' GB';
+  var optHint=OPTS.filter(function(o){return o.k===sysOpt;})[0].hint;
+  document.getElementById('sysOptHint').textContent=optHint + (sysStage==='dp'?' — DP keeps all of this on every GPU.': sysStage==='zero1'?' — ZeRO-1 shards exactly this block.': sysStage==='zero2'?' — ZeRO-2 shards grads plus this block.':' — ZeRO-3 shards everything; this block is 1/'+N+' per GPU.');
+  // tech hint
+  var techHints={
+    dp:'Data Parallel: every GPU holds the full '+P+'B × 16 B = '+(16*P)+' GB replica. '+N+' GPUs = '+(16*P*N)+' GB of identical copies to hold '+(16*P)+' GB of information. All-reduce grads (2P = '+commPerGpu+' GB per GPU).',
+    zero1:'ZeRO-1: shard the optimizer state (12/16 bytes). Each GPU owns 1/'+N+' of m,v,W₃₂ → '+( (12*P/N).toFixed(1) )+' GB opt shard vs '+(12*P)+' GB full. '+ (N>=2?'Saves '+(12*P - 12*P/N).toFixed(1)+' GB vs DP.':'') + ' Still replicates W+g (4 B/param). Comm stays 2P — reduce-scatter + all-gather = all-reduce.',
+    zero2:'ZeRO-2: shard optimizer + gradients. Per GPU: W + 1/'+N+' grads + 1/'+N+' opt. At N='+N+', grads '+( (2*P/N).toFixed(1) )+' GB vs '+(2*P)+' GB full. Same 2P as DP; just keep the slice.',
+    zero3:'ZeRO-3: shard everything — W,g,W₃₂,m,v → '+( (16*P/N).toFixed(1) )+' GB per GPU before activations. Pays 3P ('+commPerGpu+' GB): forward all-gather + backward all-gather + grad reduce-scatter.'
+  };
+  document.getElementById('sysTechHint').innerHTML='<b>'+S.name+'</b> — '+techHints[sysStage]+ (sysExtras.ckpt?'<br><b>+ Checkpoint:</b> activations ~35% of normal.':'' ) + (sysExtras.offload?'<br><b>+ Offload:</b> optimizer slice can live on CPU (PCIe 60 GB/s bottleneck).':'' );
+  // model bar — full-width horizontal stack (params row)
+  var fullState=16*P, wFull=(prec==='fp8'?1:2)*P, gFull=(prec==='fp8'?1:2)*P, w32Full=4*P, optFull=8*P;
+  var mbar=document.getElementById('sysModelBar');
+  if(mbar){
+    mbar.innerHTML=
+      '<div title="W '+wFull.toFixed(1)+' GB" style="flex:'+wFull+';background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700" class="mono">W '+wFull.toFixed(0)+'</div>'+
+      '<div title="g '+gFull.toFixed(1)+' GB" style="flex:'+gFull+';background:var(--accent-2);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700" class="mono">g '+gFull.toFixed(0)+'</div>'+
+      '<div title="W32 '+w32Full.toFixed(1)+' GB" style="flex:'+w32Full+';background:var(--warn);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700" class="mono">W₃₂ '+w32Full.toFixed(0)+'</div>'+
+      '<div title="opt '+optFull.toFixed(1)+' GB" style="flex:'+optFull+';background:var(--accent-3);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700" class="mono">opt '+optFull.toFixed(0)+'</div>';
+  }
+  var mlegend=document.getElementById('sysModelLegend');
+  if(mlegend){
+    mlegend.innerHTML=
+      '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--accent)"></i> W weights '+wFull.toFixed(1)+' GB</span>'+
+      '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--accent-2)"></i> g grads '+gFull.toFixed(1)+' GB</span>'+
+      '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--warn)"></i> W₃₂ master '+w32Full.toFixed(1)+' GB</span>'+
+      '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--accent-3)"></i> opt m+v '+optFull.toFixed(1)+' GB</span>'+
+      '<span style="margin-left:auto" class="mono"><b>'+fullState.toFixed(1)+' GB</b> full state = 16 B × '+P+'B · P='+Pgb+' GB</span>';
+  }
+  var fullEl=document.getElementById('sysFullV'); if(fullEl) fullEl.textContent=fullState.toFixed(1)+' GB';
+  var fullS=document.getElementById('sysFullS'); if(fullS) fullS.textContent='16 B × '+P+'B · '+(fullState/gpuGB).toFixed(1)+'× '+gpuName;
+  var pEl2=document.getElementById('sysPV'); if(pEl2) pEl2.textContent=Pgb+' GB';
+  // flow strip
+  var flow=[
+    '<span style="color:var(--accent)">●</span> W '+comps.wShard.toFixed(1)+' GB',
+    '<span style="color:var(--accent-2)">●</span> g '+comps.gShard.toFixed(1)+' GB',
+    '<span style="color:var(--warn)">●</span> W₃₂ '+comps.w32Shard.toFixed(1)+' GB',
+    '<span style="color:var(--accent-3)">●</span> opt '+(comps.optShard).toFixed(1)+' GB',
+    ' + act '+act.toFixed(1)+' GB'
+  ];
+  var ops={
+    dp:['all-reduce (2P)','avg grads → identical update'],
+    zero1:['reduce-scatter + all-gather (2P)','shard opt, gather weights'],
+    zero2:['reduce-scatter grads (2P)','KEEP slice, discard rest'],
+    zero3:['all-gather W (fwd) + all-gather W (bwd) + reduce-scatter g (3P)','gather → compute → discard']
+  };
+  document.getElementById('rackFlow').innerHTML=flow.join(' · ') + ' &nbsp;→&nbsp; <span style="color:var(--muted)">'+ops[sysStage][0]+'</span> · '+ops[sysStage][1];
+  // enhanced single-GPU view (all shards identical — show one in detail)
+  var rack=document.getElementById('rack');
+  rack.innerHTML='';
+  var totPct=Math.min(100, totalForBar/gpuGB*100);
+  var pctW = totalForBar>0? comps.wShard/totalForBar*100:0,
+      pctG = totalForBar>0? comps.gShard/totalForBar*100:0,
+      pctW32= totalForBar>0? comps.w32Shard/totalForBar*100:0,
+      pctOpt= totalForBar>0? comps.optShard/totalForBar*100:0,
+      pctAct= totalForBar>0? act/totalForBar*100:0;
+  var isRepl=function(seg){ if(sysStage==='dp') return true; if(sysStage==='zero1') return seg==='w'||seg==='g'; if(sysStage==='zero2') return seg==='w'; return false; };
+  var tagOf=function(seg){ return isRepl(seg)?'<span style="font-size:9px;padding:1px 5px;border-radius:99px;background:var(--warn);color:#fff;font-weight:700;margin-left:6px">REPLICATED</span>':'<span style="font-size:9px;padding:1px 5px;border-radius:99px;background:var(--accent-2);color:#fff;font-weight:700;margin-left:6px">1/'+N+' SHARD</span>'; };
+  var rowOf=function(color,label,gb,pct,seg,hint){
+    return '<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:7px 10px;background:var(--panel);border:1px solid var(--border);border-radius:10px">'+
+      '<div style="display:flex;align-items:center;gap:10px;min-width:0">'+
+        '<i style="width:10px;height:10px;border-radius:3px;background:'+color+';flex:none"></i>'+
+        '<div style="min-width:0"><div style="font-size:12.5px;font-weight:600;display:flex;align-items:center;flex-wrap:wrap">'+label+tagOf(seg)+'</div><div style="font-size:11px;color:var(--faint)">'+hint+'</div></div>'+
+      '</div>'+
+      '<div style="text-align:right;white-space:nowrap"><div class="mono" style="font-size:12.5px;font-weight:700">'+fmt1(gb)+' GB</div><div style="font-size:11px;color:var(--muted)">'+pct.toFixed(1)+'% of GPU</div></div>'+
+    '</div>';
+  };
+  var gpuCard=document.createElement('div');
+  gpuCard.style.cssText='display:grid;grid-template-columns:280px 1fr;gap:16px;align-items:start';
+  if(window.matchMedia('(max-width: 700px)').matches) gpuCard.style.gridTemplateColumns='1fr';
+  // left: GPU silhouette with vertical memory bar
+  var leftHtml=
+    '<div style="background:var(--panel-solid);border:1px solid '+(fits?'var(--border)':'rgba(255,107,139,.5)')+';border-radius:14px;padding:14px;'+(fits?'':'box-shadow:inset 0 0 0 1px rgba(255,107,139,.2)')+'">'+
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">'+
+        '<div style="font-size:12px;font-weight:700;letter-spacing:.4px">GPU 0 <span style="color:var(--muted);font-weight:500">of '+N+'</span></div>'+
+        '<div class="mono" style="font-size:11px;color:'+(fits?'var(--accent-2)':'var(--danger)')+';font-weight:700">'+fmt1(totalForBar)+' / '+gpuGB+' GB · '+(fits?'✓ fits':'✗ over by '+fmt1(totalForBar-gpuGB)+' GB')+'</div>'+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:56px 1fr;gap:12px;align-items:stretch">'+
+        '<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px;display:flex;flex-direction:column;align-items:center;gap:6px">'+
+          '<div style="font-size:9px;letter-spacing:.5px;color:var(--faint);font-weight:700">MEM</div>'+
+          '<div style="flex:1;width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;position:relative;overflow:hidden;display:flex;flex-direction:column-reverse;min-height:180px">'+
+            '<div style="height:'+pctAct+'%;background:rgba(150,160,181,.55)" title="act '+act.toFixed(1)+' GB"></div>'+
+            '<div style="height:'+pctOpt+'%;background:var(--accent-3)" title="opt '+comps.optShard.toFixed(1)+' GB"></div>'+
+            '<div style="height:'+pctW32+'%;background:var(--warn)" title="W32 '+comps.w32Shard.toFixed(1)+' GB"></div>'+
+            '<div style="height:'+pctG+'%;background:var(--accent-2)" title="g '+comps.gShard.toFixed(1)+' GB"></div>'+
+            '<div style="height:'+pctW+'%;background:var(--accent)" title="W '+comps.wShard.toFixed(1)+' GB"></div>'+
+            '<div style="position:absolute;left:0;right:0;bottom:'+(gpuGB/totalForBar*100)+'%;height:2px;background:var(--danger);opacity:'+(fits?0:1)+';box-shadow:0 0 8px rgba(255,107,139,.5)"></div>'+
+          '</div>'+
+          '<div class="mono" style="font-size:10px;color:var(--muted);text-align:center">'+gpuName+'<br><span style="color:'+(fits?'var(--accent-2)':'var(--danger)')+'">'+fmt1(totalForBar)+'/'+gpuGB+'</span></div>'+
+        '</div>'+
+        '<div style="display:flex;flex-direction:column;gap:8px;justify-content:center">'+
+          '<div style="height:8px;background:var(--panel);border:1px solid var(--border);border-radius:99px;overflow:hidden"><div style="height:100%;width:'+totPct+'%;background:'+(fits?'linear-gradient(90deg,var(--accent-2),var(--accent))':'linear-gradient(90deg,var(--danger),var(--accent-3))')+'"></div></div>'+
+          '<div style="font-size:11px;color:var(--muted)" class="mono">'+sysStage.toUpperCase()+' · rank 0/'+N+' · identical on all GPUs</div>'+
+          '<div style="font-size:11px;color:var(--faint)">Cluster: <b style="color:var(--text)">'+N+' × '+fmt1(totalForBar)+' = '+fmt1(totalForBar*N)+' GB</b> total state + act. All GPUs hold the same shard, so one picture tells the whole story.</div>'+
+          '<div style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-top:4px"><span class="mono" style="font-size:10px;padding:3px 8px;border-radius:99px;border:1px solid var(--border);background:var(--panel)">P='+Pgb+' GB</span><span class="mono" style="font-size:10px;padding:3px 8px;border-radius:99px;border:1px solid var(--border);background:var(--panel)">'+prec+'</span><span class="mono" style="font-size:10px;padding:3px 8px;border-radius:99px;border:1px solid '+(fits?'var(--border)':'rgba(255,107,139,.4)')+';background:'+(fits?'var(--panel)':'rgba(255,107,139,.12)')+';color:'+(fits?'var(--muted)':'var(--danger)')+'">'+(fits?'✓ FITS':'✗ OVER')+'</span></div>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  var rightHtml=
+    '<div style="display:flex;flex-direction:column;gap:8px">'+
+      rowOf('var(--accent)','W — weights',comps.wShard,pctW,'w', isRepl('w')?'Full '+((prec==='fp8'?1:2)*P).toFixed(1)+' GB replicated on every GPU':'Sharded 1/'+N+' of '+((prec==='fp8'?1:2)*P)+' GB')+
+      rowOf('var(--accent-2)','g — gradients',comps.gShard,pctG,'g', isRepl('g')?'Full '+((prec==='fp8'?1:2)*P).toFixed(1)+' GB replicated':'Sharded 1/'+N+' (kept only for owned shard)')+
+      rowOf('var(--warn)','W₃₂ — fp32 master',comps.w32Shard,pctW32,'w32', 'Always sharded from ZeRO-1 onward')+
+      rowOf('var(--accent-3)','opt — m + v',comps.optShard,pctOpt,'opt', 'Two Adam moments, 8 B/param total')+
+      rowOf('rgba(150,160,181,.75)','Activations',act,pctAct,'act','Micro-batch '+batch+' × seq '+seq+' · '+(sysExtras.ckpt?'checkpoint: 65% saved':'no checkpoint'))+
+    '</div>';
+  gpuCard.innerHTML='<div>'+leftHtml+'</div><div>'+rightHtml+'</div>';
+  rack.appendChild(gpuCard);
+  document.getElementById('rackLegend').innerHTML=
+    '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--accent)"></i> W (weights)</span>'+
+    '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--accent-2)"></i> g (grads)</span>'+
+    '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--warn)"></i> W₃₂ master</span>'+
+    '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--accent-3)"></i> opt (m+v)</span>'+
+    '<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:rgba(150,160,181,.55)"></i> activations</span>'+
+    '<span style="margin-left:auto" class="mono">'+N+'× '+fmt1(totalForBar)+' = '+fmt1(totalForBar*N)+' GB cluster</span>';
+  var hint;
+  if(sysStage==='dp') hint='At <b>'+gpuName+'</b> ('+gpuGB+' GB), DP needs <b>'+fmt1(totalForBar)+' GB/GPU</b> — '+(fits?'fits with '+fmt1(gpuGB-totalForBar)+' GB spare.':'over by '+fmt1(totalForBar-gpuGB)+' GB. Rule of thumb: 4 B/param of replicated W+g = '+(4*P)+' GB pins the floor — no world size fixes it.')+' Comm: every step all GPUs average gradients (<b>2P</b>).';
+  else if(sysStage==='zero1') hint='ZeRO-1: only <b>'+fmt1(comps.w32Shard+comps.optShard)+' GB opt shard</b> per GPU, W+g stay replicated ('+( (2*P+2*P).toFixed(1) )+' GB). '+(fits?'Fits.':'Miss by '+fmt1(totalForBar-gpuGB)+' GB. Next step is ZeRO-2.')+' Comm unchanged (2P) — the all-reduce is just split into reduce-scatter + all-gather.';
+  else if(sysStage==='zero2') hint='ZeRO-2: grads + opt sharded. Replicated floor is just <b>W = '+comps.wShard.toFixed(1)+' GB</b> + act. '+(fits?'Fits; ZeRO-3 would halve again but pay 3P.':'Still over. ZeRO-3 shards W too — '+( (16*P/N).toFixed(1) )+' GB vs '+(16*P)+' GB full.')+' NVLink 450 GB/s → transfer '+fmt1(commPerGpu)+' GB in '+fmt1(nvTime*1000)+' ms; IB 50 GB/s → '+fmt1(ibTime*1000)+' ms (9× slower).';
+  else hint='ZeRO-3: <b>everything is 1/'+N+'</b> → '+fmt1(state)+' GB state + '+fmt1(act)+' GB act. '+(fits?'Fits comfortably — even with '+sysSeq()+' tokens.':'Push GPUs up or shrink batch/seq.')+' Cost: <b>3P ('+commPerGpu+' GB)</b> per step — forward gather + backward gather + grad scatter. Hide it with bucketed overlap.';
+  if(sysExtras.ckpt) hint+=' <b>Checkpoint on:</b> act 65% smaller, +30% compute.';
+  if(sysExtras.offload) hint+=' <b>Offload on:</b> opt shard could live on CPU — saves GPU RAM, bottleneck becomes PCIe ~60 GB/s.';
+  document.getElementById('rackHint').innerHTML=hint;
+  document.getElementById('rackStats').textContent='P = '+Pgb+' GB ('+P+'B × '+(prec==='fp8'?'1':'2')+' B). Cluster: '+N+' GPUs × '+gpuName+' ('+nodes+' nodes, '+fmt1(N*8)+' GPUs-per-node-style). Interconnect estimate: '+(interTime*1000).toFixed(0)+' ms per step. Optimizer: '+sysOpt+' · technique: '+S.name+'.';
+  // sync stats row
+  document.getElementById('sysMemV').textContent=fmt1(totalForBar)+' GB';
+  document.getElementById('sysMemV').className='v '+(fits?'good':'bad');
+  document.getElementById('sysMemS').textContent='state '+fmt1(state)+' + act '+fmt1(act);
+  document.getElementById('sysFitsV').textContent=fits?'YES':'NO'; document.getElementById('sysFitsV').className='v '+(fits?'good':'bad');
+  document.getElementById('sysFitsS').textContent='vs '+gpuGB+' GB ('+gpuName+')';
+  document.getElementById('sysCommV').textContent=commPerGpu+' GB'; document.getElementById('sysCommS').textContent=(sysStage==='zero3'?'3P':'2P')+' per GPU';
+  document.getElementById('sysTimeV').textContent=(nvTime*1000).toFixed(0)+' / '+(ibTime*1000).toFixed(0)+' ms'; document.getElementById('sysTimeS').textContent='NVLink / IB';
+  // hw hint
+  var hw='At '+N+'× '+gpuName+', P='+Pgb+' GB. '+ (nodes===1?'Single node: all traffic on NVLink (450 GB/s).':'~'+Math.round((1-1/nodes)*100)+'% cross-node on IB (50 GB/s). Keep buckets inside the node where possible.') + ' Batch '+batch+'× seq '+sysSeq()+' → act ~'+fmt1(act)+' GB.';
+  document.getElementById('sysHwHint').textContent=hw;
+}
+function baseOpts(xT,yT,xLog){
+  var grid=cssVar('--grid'), mut=cssVar('--muted');
+  return {responsive:true,maintainAspectRatio:false,
+    interaction:{intersect:false,mode:'index'},
+    plugins:{legend:{labels:{color:mut,boxWidth:12,font:{size:11},usePointStyle:true}},
+      tooltip:{backgroundColor:cssVar('--panel-solid'),titleColor:cssVar('--text'),bodyColor:mut,
+        borderColor:cssVar('--border'),borderWidth:1,padding:12,cornerRadius:10,
+        boxPadding:4,usePointStyle:true,titleFont:{size:13,weight:'600'},bodyFont:{size:12.5}}},
+    scales:{
+      x:{type:xLog||'category',title:{display:true,text:xT,color:mut,font:{size:12}},
+        grid:{color:grid,tickLength:6},border:{display:false},
+        ticks:{color:mut,font:{size:11},maxRotation:0,autoSkip:true,autoSkipPadding:14}},
+      y:{title:{display:true,text:yT,color:mut,font:{size:12}},
+        grid:{color:grid},border:{display:false},ticks:{color:mut,font:{size:11}}}}};
+}
+function destroyAll(){for(var k in charts){try{charts[k].destroy();}catch(e){}}charts={};}
+var limitPlugin={id:'lim',afterDraw:function(c,args,opts){
+  if(!opts||opts.v==null)return;
+  var y=c.scales.y.getPixelForValue(opts.v), a=c.chartArea, x=c.ctx;
+  x.save();x.strokeStyle=opts.color||'#ff6b8b';x.lineWidth=2;x.setLineDash([8,4]);
+  x.beginPath();x.moveTo(a.left,y);x.lineTo(a.right,y);x.stroke();
+  x.fillStyle=opts.color||'#ff6b8b';x.font="600 11px 'JetBrains Mono',monospace";x.textAlign='right';
+  x.fillText(opts.label||'',a.right-4,y-8);x.restore();}};
+
+function buildAllCharts(){
+  if(!window.Chart)return;
+  destroyAll();
+  var acc=cssVar('--accent'),acc2=cssVar('--accent-2'),acc3=cssVar('--accent-3');
+  var warn=cssVar('--warn'),danger=cssVar('--danger'),mut=cssVar('--muted'),panel=cssVar('--panel-solid');
+
+  charts.bytes=new Chart(document.getElementById('bytesChart'),{type:'bar',
+    data:{labels:['Weight (fp16)','Gradient (fp16)','FP32 master','Optimizer (m+v)'],
+      datasets:[{data:[2,2,4,8],backgroundColor:[acc,acc2,acc3,warn],borderRadius:8,borderSkipped:false,barThickness:52}]},
+    options:(function(){var o=baseOpts('','Bytes per parameter');o.plugins.legend.display=false;
+      o.scales.y.min=0;o.scales.y.max=10;return o;})()});
+
+  charts.comp=new Chart(document.getElementById('compChart'),{type:'doughnut',
+    data:{labels:['Weights 60 GB','Gradients 60 GB','FP32 master 120 GB','Optimizer 240 GB'],
+      datasets:[{data:[60,60,120,240],backgroundColor:[acc,acc2,acc3,warn],borderColor:panel,borderWidth:3}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
+      plugins:{legend:{position:'bottom',labels:{color:mut,boxWidth:12,font:{size:11}}},
+        tooltip:{backgroundColor:panel,titleColor:cssVar('--text'),bodyColor:mut,
+          borderColor:cssVar('--border'),borderWidth:1,padding:12,cornerRadius:10,
+          callbacks:{label:function(c){return ' '+c.raw+' GB ('+(c.raw/480*100).toFixed(1)+'%)';}}}}}});
+
+  var dp=SCALE_WS.map(function(){return 480;});
+  var z1=SCALE_WS.map(function(n){return memGB('zero1',n,'fp16');});
+  var z2=SCALE_WS.map(function(n){return memGB('zero2',n,'fp16');});
+  var z3=SCALE_WS.map(function(n){return memGB('zero3',n,'fp16');});
+  charts.scale=new Chart(document.getElementById('scaleChart'),{type:'line',
+    data:{labels:SCALE_WS.map(function(w){return w+' GPUs';}),
+      datasets:[
+        {label:'DP',data:dp,borderColor:danger,borderWidth:2.5,pointRadius:4,tension:.25},
+        {label:'ZeRO-1',data:z1,borderColor:warn,borderWidth:2.5,pointRadius:4,tension:.25},
+        {label:'ZeRO-2',data:z2,borderColor:acc,borderWidth:2.5,pointRadius:4,tension:.25},
+        {label:'ZeRO-3',data:z3,borderColor:acc2,borderWidth:2.5,pointRadius:4,tension:.25}]},
+    options:(function(){var o=baseOpts('World size','GB per GPU');
+      o.plugins.tooltip.callbacks={label:function(c){return ' '+c.dataset.label+': '+c.raw.toFixed(1)+' GB'+(c.raw<=74.5?' (fits)':'');}};
+      return o;})(),
+    plugins:[{id:'lim2',afterDraw:function(c){
+      var y=c.scales.y.getPixelForValue(74.5),a=c.chartArea,x=c.ctx;
+      x.save();x.strokeStyle=danger;x.lineWidth=2;x.setLineDash([8,4]);
+      x.beginPath();x.moveTo(a.left,y);x.lineTo(a.right,y);x.stroke();
+      x.fillStyle=danger;x.font="600 11px 'JetBrains Mono',monospace";x.textAlign='right';
+      x.fillText('74.5 GB limit',a.right-4,y-8);x.restore();}}]});
+
+  charts.fits=new Chart(document.getElementById('fitsChart'),{type:'bar',
+    data:{labels:SCALE_WS.map(function(w){return w+'';}),
+      datasets:[
+        {label:'ZeRO-2',data:z2,backgroundColor:z2.map(function(v){return v<=74.5?acc:acc+'44';}),borderColor:acc,borderWidth:2,borderRadius:6,borderSkipped:false},
+        {label:'ZeRO-3',data:z3,backgroundColor:z3.map(function(v){return v<=74.5?acc2:acc2+'44';}),borderColor:acc2,borderWidth:2,borderRadius:6,borderSkipped:false}]},
+    options:(function(){var o=baseOpts('GPUs','GB per GPU');
+      o.scales.y.max=130;
+      o.plugins.tooltip.callbacks={label:function(c){return ' '+c.dataset.label+': '+c.raw.toFixed(1)+' GB'+(c.raw<=74.5?' (fits)':' (over)');}};
+      return o;})(),
+    plugins:[limitPlugin]});
+  charts.fits.config.options.plugins.lim={v:74.5,label:'74.5 GB',color:danger};
+  charts.commVol=new Chart(document.getElementById('commVolChart'),{type:'bar',
+    data:{labels:['Data Parallel','ZeRO-1','ZeRO-2','ZeRO-3'],
+      datasets:[
+        {label:'GB / GPU',data:[1920,180,180,180],backgroundColor:[danger+'99',warn+'99',acc+'99',acc2+'99'],
+          borderColor:[danger,warn,acc,acc2],borderWidth:2,borderRadius:8,borderSkipped:false,yAxisID:'y'},
+        {label:'Multiplier (xP)',data:[32,3,3,3],type:'line',borderColor:acc3,backgroundColor:acc3,
+          pointRadius:5,pointHoverRadius:7,tension:.3,yAxisID:'y1'}]},
+    options:(function(){var o=baseOpts('','GB per GPU');
+      o.scales.y1={position:'right',min:0,max:35,title:{display:true,text:'Multiplier (xP)',color:mut,font:{size:12}},
+        grid:{drawOnChartArea:false},border:{display:false},ticks:{color:mut,font:{size:11}}};
+      return o;})()});
+
+  charts.commTime=new Chart(document.getElementById('commTimeChart'),{type:'bar',
+    data:{labels:['Data Parallel','ZeRO-1','ZeRO-2','ZeRO-3'],
+      datasets:[
+        {label:'NVLink 450 GB/s',data:[266.7,266.7,266.7,400],backgroundColor:acc+'bb',borderColor:acc,borderWidth:2,borderRadius:6,borderSkipped:false},
+        {label:'InfiniBand 50 GB/s',data:[2400,2400,2400,3600],backgroundColor:acc3+'bb',borderColor:acc3,borderWidth:2,borderRadius:6,borderSkipped:false}]},
+    options:(function(){var o=baseOpts('','Time (ms) - log scale',false);o.scales.y.type='logarithmic';return o;})()});
+
+  charts.prec=new Chart(document.getElementById('precChart'),{type:'bar',
+    data:{labels:['Weights','Gradients','FP32 master','Optimizer','Total'],
+      datasets:[
+        {label:'FP16',data:[60,60,120,240,480],backgroundColor:acc+'cc',borderColor:acc,borderWidth:2,borderRadius:6,borderSkipped:false},
+        {label:'FP8 (MXFP8)',data:[30,30,120,240,420],backgroundColor:acc3+'cc',borderColor:acc3,borderWidth:2,borderRadius:6,borderSkipped:false}]},
+    options:baseOpts('','GB')});
+}
+
+updateSystem();
+updateExplorer();
+renderTrace();
+var saved='dark';
+try{saved=localStorage.getItem('cl-theme')||'dark';}catch(e){}
+setTheme(saved);
+</script>
+</body>
+</html>
